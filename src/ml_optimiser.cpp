@@ -311,6 +311,10 @@ void MlOptimiser::parseContinue(int argc, char **argv)
     if (fnt != "OLD")
         class_inactivity_threshold = textToFloat(fnt);
 
+    fnt = parser.getOption("--junk_lowpass", "Resolution (in Angstroms) to which junk classes are low-pass filtered after every iteration (<= 0: no filtering)", "OLD");
+    if (fnt != "OLD")
+        junk_lowpass = textToFloat(fnt);
+
     fnt = parser.getOption("--maxsig", "Maximum number of poses & translations to consider", "OLD");
     if (fnt != "OLD")
         maximum_significants_arg = textToInteger(fnt);
@@ -668,6 +672,12 @@ void MlOptimiser::parseInitial(int argc, char **argv)
     is_3d_model = parser.checkOption("--denovo_3dref", "Make an initial 3D model from randomly oriented 2D particles");
     mymodel.sigma2_offset = textToFloat(parser.getOption("--offset", "Initial estimated stddev for the origin offsets (in Angstroms)", "10"));
     mymodel.sigma2_offset *= mymodel.sigma2_offset;
+
+    // Junk classes
+    nr_junk_classes_arg = textToInteger(parser.getOption("--K_junk", "Number of junk classes to add, initialised as the average of the (non-junk) reference(s)", "0"));
+    fn_junk_classes = parser.getOption("--junk_classes", "Comma-separated list of class numbers (starting at 1) to flag as junk classes (can also be set with rlnClassIsJunk in the --ref STAR file)", "");
+    junk_lowpass = textToFloat(parser.getOption("--junk_lowpass", "Resolution (in Angstroms) to which junk classes are low-pass filtered after every iteration (<= 0: no filtering)", "20"));
+    junk_fixed = parser.checkOption("--junk_fixed", "Keep junk classes fixed at their (low-pass filtered) starting maps");
 
     // If tomo optimiser set is passed, we use it to initialise data, reference and mask
     if (fn_OS != "")
@@ -1240,6 +1250,10 @@ void MlOptimiser::read(FileName fn_in, int rank, bool do_prevent_preread)
         mu = 0.9;
     if (!MD.getValue(EMDL_OPTIMISER_SGD_CLASS_INACTIVITY_THRESHOLD, class_inactivity_threshold))
         class_inactivity_threshold = 0.;
+    if (!MD.getValue(EMDL_OPTIMISER_JUNK_LOWPASS, junk_lowpass))
+        junk_lowpass = 20.;
+    if (!MD.getValue(EMDL_OPTIMISER_JUNK_FIXED, junk_fixed))
+        junk_fixed = false;
     if (!MD.getValue(EMDL_OPTIMISER_SGD_MU, mu))
         mu = 0.9;
     if (!MD.getValue(EMDL_OPTIMISER_SGD_SUBSET_SIZE, subset_size))
@@ -1468,6 +1482,8 @@ void MlOptimiser::write(bool do_write_sampling, bool do_write_data, bool do_writ
         MD.setValue(EMDL_OPTIMISER_SGD_MU, mu);
         MD.setValue(EMDL_OPTIMISER_SGD_SKIP_ANNNEAL, do_grad_skip_anneal);
         MD.setValue(EMDL_OPTIMISER_SGD_CLASS_INACTIVITY_THRESHOLD, class_inactivity_threshold);
+        MD.setValue(EMDL_OPTIMISER_JUNK_LOWPASS, junk_lowpass);
+        MD.setValue(EMDL_OPTIMISER_JUNK_FIXED, junk_fixed);
         MD.setValue(EMDL_OPTIMISER_SGD_SUBSET_SIZE, subset_size);
         MD.setValue(EMDL_OPTIMISER_SGD_WRITE_EVERY_SUBSET, write_every_grad_iter);
         MD.setValue(EMDL_OPTIMISER_SGD_STEPSIZE, grad_stepsize);
@@ -2110,8 +2126,53 @@ void MlOptimiser::initialiseGeneral(int rank)
         mymodel.initialiseFromImages(
                 fn_ref, is_3d_model, mydata,
                 do_average_unaligned, do_generate_seeds,refs_are_ctf_corrected,
-                ref_angpix, gradient_refine, grad_pseudo_halfsets, do_trust_ref_size, (rank==0));
+                ref_angpix, gradient_refine, grad_pseudo_halfsets, do_trust_ref_size, (rank==0),
+                nr_junk_classes_arg);
 
+        // Flag user-specified classes as junk classes
+        if (fn_junk_classes != "")
+        {
+            std::vector<std::string> words;
+            tokenize(fn_junk_classes, words, ",");
+            for (int i = 0; i < words.size(); i++)
+            {
+                int iclass = textToInteger(words[i]) - 1;
+                if (iclass < 0 || iclass >= mymodel.nr_classes)
+                    REPORT_ERROR("ERROR: --junk_classes contains class number " + words[i] + ", but there are only " + integerToString(mymodel.nr_classes) + " classes");
+                mymodel.class_is_junk[iclass] = 1;
+            }
+        }
+
+        // Low-pass filter the starting maps of the junk classes
+        if (junk_lowpass > 0.)
+        {
+            for (int iclass = 0; iclass < mymodel.nr_classes; iclass++)
+                if (mymodel.class_is_junk[iclass])
+                    lowPassFilterMap(mymodel.Iref[iclass], junk_lowpass, mymodel.pixel_size);
+        }
+    }
+
+    int nr_junk_classes = (mymodel.nr_bodies > 1) ? 0 : mymodel.numberOfJunkClasses();
+    if (nr_junk_classes > 0)
+    {
+        if (gradient_refine)
+            REPORT_ERROR("ERROR: junk classes cannot be used with gradient-driven optimisation");
+        if (do_som)
+            REPORT_ERROR("ERROR: junk classes cannot be used with self-organizing maps");
+        if (nr_junk_classes == mymodel.nr_classes && verb > 0)
+            std::cerr << " WARNING: all classes are junk classes!" << std::endl;
+        if (verb > 0)
+        {
+            std::cout << " + Junk classes:";
+            for (int iclass = 0; iclass < mymodel.nr_classes; iclass++)
+                if (mymodel.class_is_junk[iclass]) std::cout << " " << iclass + 1;
+            if (junk_fixed)
+                std::cout << " (kept fixed at their starting maps)" << std::endl;
+            else if (junk_lowpass > 0.)
+                std::cout << " (low-pass filtered to " << junk_lowpass << " A after every iteration)" << std::endl;
+            else
+                std::cout << " (not filtered)" << std::endl;
+        }
     }
 
     if (do_ctf_correction && mydata.hasCtfCorrected())
@@ -3255,6 +3316,16 @@ void MlOptimiser::iterateSetup()
     omp_init_lock(&global_mutex);
     for (int i = 0; i < NR_CLASS_MUTEXES; i++)
         omp_init_lock(global_mutex2 + i);
+
+    // Store the starting maps of fixed junk classes
+    junk_fixed_refs.clear();
+    if (junk_fixed && mymodel.nr_bodies == 1)
+    {
+        junk_fixed_refs.resize(mymodel.nr_classes);
+        for (int iclass = 0; iclass < mymodel.nr_classes; iclass++)
+            if (mymodel.class_is_junk[iclass])
+                junk_fixed_refs[iclass] = mymodel.Iref[iclass];
+    }
 }
 void MlOptimiser::iterateWrapUp()
 {
@@ -3436,6 +3507,8 @@ void MlOptimiser::iterate()
         }
 
         maximization();
+
+        applyJunkClassConstraints();
 
 #ifdef TIMING
         timer.toc(TIMING_MAX);
@@ -5061,6 +5134,23 @@ void MlOptimiser::maximization()
 
 //	if (skip_class >= 0)
 //		std::cerr << " Class " << skip_class << " replaced due to inactivity." << std::endl;
+}
+
+void MlOptimiser::applyJunkClassConstraints()
+{
+    if (mymodel.nr_bodies > 1)
+        return;
+
+    for (int iclass = 0; iclass < mymodel.nr_classes; iclass++)
+    {
+        if (!mymodel.class_is_junk[iclass])
+            continue;
+
+        if (junk_fixed && iclass < junk_fixed_refs.size())
+            mymodel.Iref[iclass] = junk_fixed_refs[iclass];
+        else if (junk_lowpass > 0.)
+            lowPassFilterMap(mymodel.Iref[iclass], junk_lowpass, mymodel.pixel_size);
+    }
 }
 
 void MlOptimiser::centerClasses()

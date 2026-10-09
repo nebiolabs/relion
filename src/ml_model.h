@@ -152,6 +152,9 @@ public:
 	std::vector<RFLOAT > pdf_class;
 	std::vector<RFLOAT > class_age;
 
+	// Flag for each class: is it a junk sink (kept at low resolution or fixed)?
+	std::vector<int> class_is_junk;
+
 	// One array for each class
 	std::vector<MultidimArray<RFLOAT> > pdf_direction;
 
@@ -352,6 +355,7 @@ public:
 			fourier_coverage_class = MD.fourier_coverage_class;
 			pdf_class = MD.pdf_class;
 			class_age = MD.class_age;
+			class_is_junk = MD.class_is_junk;
 			pdf_direction = MD.pdf_direction;
 			prior_offset_class = MD.prior_offset_class;
 			nr_particles_per_group = MD.nr_particles_per_group;
@@ -397,6 +401,7 @@ public:
 		prior_offset_class.clear();
 		pdf_class.clear();
 		class_age.clear();
+		class_is_junk.clear();
 		pdf_direction.clear();
 		nr_particles_per_group.clear();
 		ref_dim = data_dim = ori_size = nr_classes = nr_bodies = nr_groups = nr_directions = interpolator = r_min_nn;
@@ -430,9 +435,14 @@ public:
 
 	// Read images from disc and initialise
 	// Also set do_average_unaligned and do_generate_seeds flags
+	// nr_junk_classes extra junk classes are appended, initialised as the average of all non-junk references
 	void initialiseFromImages(FileName fn_ref, bool _is_3d_model, Experiment &_mydata,
 			bool &do_average_unaligned, bool &do_generate_seeds, bool &refs_are_ctf_corrected,
-			RFLOAT ref_angpix = -1., bool _do_grad = false, bool _pseudo_halfsets = false, bool do_trust_ref = false, bool verb = false);
+			RFLOAT ref_angpix = -1., bool _do_grad = false, bool _pseudo_halfsets = false, bool do_trust_ref = false, bool verb = false,
+			int nr_junk_classes = 0);
+
+	// Number of classes that are flagged as junk sinks
+	int numberOfJunkClasses() const;
 
 	RFLOAT getResolution(int ipix)	{ return (RFLOAT)ipix/(pixel_size * ori_size); }
 

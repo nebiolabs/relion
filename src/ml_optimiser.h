@@ -426,6 +426,18 @@ public:
 
 	float class_inactivity_threshold;
 
+	// Junk classes: classes that act as sinks for particles that do not belong to any structural class
+	// Number of junk classes to add to the reference(s)
+	int nr_junk_classes_arg;
+	// Comma-separated list of (1-based) class numbers to flag as junk classes
+	std::string fn_junk_classes;
+	// Resolution (in A) to which junk classes are low-pass filtered after every iteration (<= 0: no filtering)
+	RFLOAT junk_lowpass;
+	// Keep junk classes fixed at their starting maps
+	bool junk_fixed;
+	// Starting maps of the junk classes, for junk_fixed
+	std::vector<MultidimArray<RFLOAT> > junk_fixed_refs;
+
 	// Size of the random subsets
 	long int subset_size;
 
@@ -897,6 +909,9 @@ public:
             som_inactivity_threshold(0),
             som_neighbour_pull(0),
             class_inactivity_threshold(0),
+            nr_junk_classes_arg(0),
+            junk_lowpass(-1),
+            junk_fixed(false),
             gradient_refine(false),
             do_grad(false),
             grad_em_iters(0),
@@ -1082,6 +1097,11 @@ public:
 	 * and also update the origin offsets in the _data.star file correspondingly
 	 */
 	void centerClasses();
+
+	/* Keep junk classes at low resolution (or reset them to their starting maps)
+	 * Called after every maximization step
+	 */
+	void applyJunkClassConstraints();
 
 	/* Updates the current resolution (from data_vs_prior array) and keeps track of best resolution thus far
 	 *  and precalculates a 2D Fourier-space array with pointers to the resolution of each point in a FFTW-centered array

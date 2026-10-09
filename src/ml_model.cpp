@@ -52,6 +52,7 @@ void MlModel::initialise(bool _do_grad, bool _pseudo_halfsets)
 	max_radius_mask_bodies.resize(nr_bodies, -1);
 	pdf_class.resize(nr_classes, 1./(RFLOAT)nr_classes);
 	class_age.resize(nr_classes, 0);
+	class_is_junk.resize(nr_classes, 0);
 	pdf_direction.resize(nr_classes * nr_bodies);
 	group_names.resize(nr_groups, "");
 	sigma2_noise.resize(nr_optics_groups);
@@ -247,6 +248,13 @@ void MlModel::read(FileName fn_in, int nr_optics_groups_from_mydata, bool _do_gr
 		if (iclass == 0 || nr_bodies == 1) // there is only one pdf_class for multibody, but multiple for classification!
 			if (!MDclass.getValue(EMDL_MLMODEL_PDF_CLASS, pdf_class[iclass]) )
 				REPORT_ERROR("MlModel::readStar: incorrect model_classes table: no pdf_class");
+		if (nr_bodies == 1)
+		{
+			bool is_junk = false;
+			if (MDclass.containsLabel(EMDL_MLMODEL_CLASS_IS_JUNK))
+				MDclass.getValue(EMDL_MLMODEL_CLASS_IS_JUNK, is_junk);
+			class_is_junk[iclass] = is_junk;
+		}
 		if (is_helix)
 		{
 			if (!MDclass.getValue(EMDL_MLMODEL_HELICAL_RISE, helical_rise[iclass]) ||
@@ -741,6 +749,10 @@ void MlModel::write(FileName fn_out, HealpixSampling &sampling, bool do_write_bi
 			MDclass.setValue(EMDL_MLMODEL_HELICAL_RISE, helical_rise[iclass]);
 			MDclass.setValue(EMDL_MLMODEL_HELICAL_TWIST, helical_twist[iclass]);
 		}
+
+		// Only write out the junk flags when junk classes are used, to keep model.star files unchanged otherwise
+		if (nr_bodies == 1 && numberOfJunkClasses() > 0)
+			MDclass.setValue(EMDL_MLMODEL_CLASS_IS_JUNK, (bool)class_is_junk[iclass]);
 	}
 	MDclass.write(fh);
 
@@ -851,7 +863,8 @@ void  MlModel::readTauSpectrum(FileName fn_tau, int verb)
 void MlModel::initialiseFromImages(
 	FileName fn_ref, bool _is_3d_model, Experiment &_mydata,
 	bool &do_average_unaligned, bool &do_generate_seeds, bool &refs_are_ctf_corrected,
-	RFLOAT _ref_angpix, bool _do_grad, bool _pseudo_halfsets, bool _do_trust_ref_size, bool verb)
+	RFLOAT _ref_angpix, bool _do_grad, bool _pseudo_halfsets, bool _do_trust_ref_size, bool verb,
+	int nr_junk_classes)
 {
 
 
@@ -889,10 +902,15 @@ void MlModel::initialiseFromImages(
 			Iref.clear();
 			Igrad1.clear();
 			Igrad2.clear();
+			class_is_junk.clear();
 
 			FOR_ALL_OBJECTS_IN_METADATA_TABLE(MDref)
 			{
 				MDref.getValue(EMDL_MLMODEL_REF_IMAGE, fn_tmp);
+				bool is_junk = false;
+				if (MDref.containsLabel(EMDL_MLMODEL_CLASS_IS_JUNK))
+					MDref.getValue(EMDL_MLMODEL_CLASS_IS_JUNK, is_junk);
+				class_is_junk.push_back(is_junk);
 				img.read(fn_tmp);
 				img().setXmippOrigin();
 				if (_ref_angpix > 0.)
@@ -971,6 +989,7 @@ void MlModel::initialiseFromImages(
 			Iref.clear();
 			Igrad1.clear();
 			Igrad2.clear();
+			class_is_junk.assign(nr_classes, 0);
 			if (nr_bodies > 1)
 			{
 				for (int ibody = 0; ibody < nr_bodies; ibody++)
@@ -1010,6 +1029,48 @@ void MlModel::initialiseFromImages(
 				do_generate_seeds = false;
 		}
 
+	}
+
+	// Append junk classes, initialised as the average of all non-junk references
+	// (the optimiser will low-pass filter them)
+	if (nr_junk_classes > 0)
+	{
+		if (fn_ref == "None")
+			REPORT_ERROR("MlModel::initialiseFromImages ERROR: junk classes can only be added when providing reference(s) with --ref");
+		if (nr_bodies > 1)
+			REPORT_ERROR("MlModel::initialiseFromImages ERROR: junk classes cannot be used in multi-body refinement");
+		if (_do_grad)
+			REPORT_ERROR("MlModel::initialiseFromImages ERROR: junk classes cannot be used with gradient-driven optimisation");
+
+		MultidimArray<RFLOAT> Iavg;
+		int nr_avg = 0;
+		for (int pass = 0; pass < 2 && nr_avg == 0; pass++)
+		{
+			// First pass: average only non-junk references; if all references are junk, use all of them
+			for (int iclass = 0; iclass < nr_classes; iclass++)
+			{
+				if (pass == 0 && class_is_junk[iclass])
+					continue;
+				if (nr_avg == 0)
+					Iavg = Iref[iclass];
+				else
+					Iavg += Iref[iclass];
+				nr_avg++;
+			}
+		}
+		Iavg /= (RFLOAT)nr_avg;
+
+		for (int ijunk = 0; ijunk < nr_junk_classes; ijunk++)
+		{
+			Iref.push_back(Iavg);
+			class_is_junk.push_back(1);
+			nr_classes++;
+		}
+
+		if (fn_ref.isStarFile() && nr_junk_classes > 1 && verb > 0)
+			std::cerr << " WARNING: the " << nr_junk_classes << " junk classes added with --K_junk all start from the same map; they will remain identical. Consider using --K_junk 1." << std::endl;
+		else if (!fn_ref.isStarFile())
+			do_generate_seeds = (nr_classes > 1);
 	}
 
 	// Make sure that the model has the same box and pixel size as (the first optics group of) the data
@@ -1145,6 +1206,14 @@ void MlModel::initialiseFromImages(
 	for (int i=0; i< nr_groups; i++)
 		group_names[i] = _mydata.groups[i].name;
 
+}
+
+int MlModel::numberOfJunkClasses() const
+{
+	int nr_junk = 0;
+	for (int i = 0; i < class_is_junk.size(); i++)
+		if (class_is_junk[i]) nr_junk++;
+	return nr_junk;
 }
 
 void MlModel::initialisePdfDirection(long long int newsize)

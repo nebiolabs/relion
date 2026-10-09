@@ -1529,6 +1529,14 @@ void JobWindow::initialiseClass3DWindow()
 
 	place("sym_name", TOGGLE_DEACTIVATE);
 
+	// Add a little spacer
+	current_y += STEPY/2;
+
+	place("nr_junk", TOGGLE_DEACTIVATE);
+	place("junk_classes", TOGGLE_DEACTIVATE);
+	place("junk_lowpass", TOGGLE_DEACTIVATE);
+	place("do_junk_fixed", TOGGLE_DEACTIVATE);
+
 	tab2->end();
 	tab3->begin();
 	tab3->label("CTF");

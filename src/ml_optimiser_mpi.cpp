@@ -4121,6 +4121,8 @@ void MlOptimiserMpi::iterate()
 
 		MPI_Barrier(MPI_COMM_WORLD);
 
+		applyJunkClassConstraints();
+
 #ifdef TIMING
 		timer.tic(TIMING_ITER_HELICALREFINE);
 #endif

@@ -324,6 +324,7 @@ enum EMDLabel
 	EMDL_MLMODEL_ORIENTABILITY_CONTRIBUTION,
 	EMDL_MLMODEL_PADDING_FACTOR,
 	EMDL_MLMODEL_PDF_CLASS,
+	EMDL_MLMODEL_CLASS_IS_JUNK,
 	EMDL_MLMODEL_PRIOR_OFFX_CLASS,
 	EMDL_MLMODEL_PRIOR_OFFY_CLASS,
 	EMDL_MLMODEL_PDF_ORIENT,
@@ -399,6 +400,8 @@ enum EMDLabel
 	EMDL_OPTIMISER_SGD_SIGMA2FUDGE_HALFLIFE,
 	EMDL_OPTIMISER_SGD_SKIP_ANNNEAL,
 	EMDL_OPTIMISER_SGD_CLASS_INACTIVITY_THRESHOLD,
+	EMDL_OPTIMISER_JUNK_LOWPASS,
+	EMDL_OPTIMISER_JUNK_FIXED,
 	EMDL_OPTIMISER_SGD_SUBSET_SIZE,
 	EMDL_OPTIMISER_SGD_WRITE_EVERY_SUBSET,
 	EMDL_OPTIMISER_SGD_MAX_SUBSETS,
@@ -1061,6 +1064,7 @@ private:
 		EMDL::addLabel(EMDL_MLMODEL_ORIGINAL_SIZE, EMDL_INT, "rlnOriginalImageSize", "Original size of the images (in pixels)");
 		EMDL::addLabel(EMDL_MLMODEL_PADDING_FACTOR, EMDL_DOUBLE, "rlnPaddingFactor", "Oversampling factor for Fourier transforms of the references");
 		EMDL::addLabel(EMDL_MLMODEL_PDF_CLASS, EMDL_DOUBLE, "rlnClassDistribution", "Probability Density Function of the different classes (i.e. fraction of images assigned to each class)");
+		EMDL::addLabel(EMDL_MLMODEL_CLASS_IS_JUNK, EMDL_BOOL, "rlnClassIsJunk", "Flag to indicate that this class is a junk sink, which is kept at low resolution (or fixed) to absorb particles that do not belong to any structural class");
 		EMDL::addLabel(EMDL_MLMODEL_PRIOR_OFFX_CLASS, EMDL_DOUBLE, "rlnClassPriorOffsetX", "Prior in the X-offset for a class (in pixels)");
 		EMDL::addLabel(EMDL_MLMODEL_PRIOR_OFFY_CLASS, EMDL_DOUBLE, "rlnClassPriorOffsetY", "Prior in the Y-offset for a class (in pixels)");
 		EMDL::addLabel(EMDL_MLMODEL_PDF_ORIENT, EMDL_DOUBLE, "rlnOrientationDistribution", "Probability Density Function of the orientations  (i.e. fraction of images assigned to each orient)");
@@ -1133,6 +1137,8 @@ private:
 		EMDL::addLabel(EMDL_OPTIMISER_SGD_SIGMA2FUDGE_HALFLIFE, EMDL_INT, "rlnSgdSigma2FudgeHalflife", "After processing this many particles the multiplicative factor for the noise variance will have halved");
 		EMDL::addLabel(EMDL_OPTIMISER_SGD_SKIP_ANNNEAL, EMDL_BOOL, "rlnSgdSkipAnneal", "Option to switch off annealing of multiple references in gradient refinement");
 		EMDL::addLabel(EMDL_OPTIMISER_SGD_CLASS_INACTIVITY_THRESHOLD, EMDL_DOUBLE, "rlnSgdClassInactivityThreshold", "Threshold for dropping classes with low activity during gradient optimisation.");
+		EMDL::addLabel(EMDL_OPTIMISER_JUNK_LOWPASS, EMDL_DOUBLE, "rlnJunkClassLowpass", "Resolution (in Angstroms) to which junk classes are low-pass filtered after every iteration (negative for no filtering)");
+		EMDL::addLabel(EMDL_OPTIMISER_JUNK_FIXED, EMDL_BOOL, "rlnJunkClassFixed", "Flag to indicate that junk classes are kept fixed at their starting maps");
 		EMDL::addLabel(EMDL_OPTIMISER_SGD_SUBSET_SIZE, EMDL_INT, "rlnSgdSubsetSize", "The number of particles in the random subsets for gradient refinement");
 		EMDL::addLabel(EMDL_OPTIMISER_SGD_WRITE_EVERY_SUBSET, EMDL_INT, "rlnSgdWriteEverySubset", "Every this many iterations the model is written to disk in gradient refinement");
 		EMDL::addLabel(EMDL_OPTIMISER_SGD_MAX_SUBSETS, EMDL_INT, "rlnSgdMaxSubsets", "Stop SGD after doing this many subsets (possibly spanning more than 1 iteration)");

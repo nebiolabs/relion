@@ -3713,8 +3713,11 @@ from which you want to continue a previous run. \
 Note that the Output rootname of the continued run and the rootname of the previous run cannot be the same. \
 If they are the same, the program will automatically add a '_ctX' to the output rootname, \
 with X being the iteration from which one continues the previous run.");
-	joboptions["fn_ref"] = JobOption("Reference map:", LABEL_MAP_CPIPE, 1, "", "Image Files (*.{spi,vol,mrc})", "A 3D map in MRC/Spider format. \
-	Make sure this map has the same dimensions and the same pixel size as your input images, or specify that one can resize the reference if needed.");
+	joboptions["fn_ref"] = JobOption("Reference map:", LABEL_MAP_CPIPE, 1, "", "Image or STAR Files (*.{spi,vol,mrc,star})", "A 3D map in MRC/Spider format. \
+	Make sure this map has the same dimensions and the same pixel size as your input images, or specify that one can resize the reference if needed. \n\n\
+Alternatively, provide a STAR file with one row per starting map in an _rlnReferenceImage column, for example one map per expected conformation. \
+In that case, the number of classes is the number of rows in the STAR file (plus any junk classes), and the Number of classes on the Optimisation tab is ignored. \
+An optional _rlnClassIsJunk column (0 or 1) flags maps that serve as junk sinks.");
 	joboptions["fn_mask"] = JobOption("Reference mask (optional):", LABEL_MASK_CPIPE, 1, "", "Image Files (*.{spi,vol,msk,mrc})", "\
 If no mask is provided, a soft spherical mask based on the particle diameter will be used.\n\
 \n\
@@ -3742,6 +3745,21 @@ Therefore, if in doubt it is recommended to set this option to No.");
 	joboptions["ini_high"] = JobOption("Initial low-pass filter (A):", 60, 0, 200, 5, "It is recommended to strongly low-pass filter your initial reference map. \
 If it has not yet been low-pass filtered, it may be done internally using this option. \
 If set to 0, no low-pass filter will be applied to the initial reference(s).");
+	joboptions["nr_junk"] = JobOption("Number of junk classes to add:", 0, 0, 10, 1, "Number of junk classes to add to the classes from the reference(s). \
+Junk classes serve as sinks for particles that do not belong to any of the structural classes, e.g. damaged particles, contaminants or mis-picks. \
+They are initialised as the average of the (non-junk) reference map(s), low-pass filtered to the resolution below. \
+Junk classes are appended after all other classes. One junk class is usually enough when starting from multiple maps in a STAR file, \
+as multiple added junk classes all start from the same map.");
+	joboptions["junk_classes"] = JobOption("Junk class numbers:", std::string(""), "Optional comma-separated list of class numbers (starting at 1) that are junk classes, \
+e.g. to use deliberately broad or low-quality maps from the input STAR file of references as junk sinks. \
+This is an alternative to the _rlnClassIsJunk column in the STAR file.");
+	joboptions["junk_lowpass"] = JobOption("Junk class low-pass filter (A):", 20, 5, 60, 1, "Junk classes are low-pass filtered to this resolution after every iteration, \
+which keeps them broad and featureless so that they keep absorbing particles that do not fit the structural classes. \
+If set to 0 or less, junk classes are not filtered and evolve like any other class.");
+	joboptions["do_junk_fixed"] = JobOption("Keep junk classes fixed?", false, "If set to Yes, junk classes are not updated, \
+but kept at their (low-pass filtered) starting maps throughout the classification. \
+If set to No, junk classes are reconstructed from their particles and then low-pass filtered at every iteration.");
+
 	joboptions["sym_name"] = JobOption("Symmetry:", std::string("C1"), "If the molecule is asymmetric, \
 set Symmetry group to C1. Note their are multiple possibilities for icosahedral symmetry: \n \
 * I1: No-Crowther 222 (standard in Heymann, Chagoyen & Belnap, JSB, 151 (2005) 196–207) \n \
@@ -3951,6 +3969,22 @@ bool RelionJob::getCommandsClass3DJob(std::string &outputname, std::vector<std::
 	int my_classes = (int)joboptions["nr_classes"].getNumber(error_message);
 	if (error_message != "") return false;
 
+	// With a STAR file of references, the number of classes is the number of references
+	FileName fn_ref_classes = joboptions["fn_ref"].getString();
+	if (!is_continue && fn_ref_classes.isStarFile() && exists(fn_ref_classes))
+	{
+		MetaDataTable MDref;
+		MDref.read(fn_ref_classes, "model_classes");
+		if (MDref.numberOfObjects() == 0)
+			MDref.read(fn_ref_classes);
+		if (MDref.numberOfObjects() > 0)
+			my_classes = MDref.numberOfObjects();
+	}
+	int my_junk = (int)joboptions["nr_junk"].getNumber(error_message);
+	if (error_message != "") return false;
+	if (!is_continue)
+		my_classes += my_junk;
+
 	outputNodes = getOutputNodesRefine(outputname + fn_run, "Class3D", my_iter, my_classes, 3, 1, is_tomo);
 
 	if (!is_continue)
@@ -4009,6 +4043,17 @@ bool RelionJob::getCommandsClass3DJob(std::string &outputname, std::vector<std::
 		if (joboptions["ini_high"].getNumber(error_message) > 0.)
 			command += " --ini_high " + joboptions["ini_high"].getString();
 		if (error_message != "") return false;
+
+		if (my_junk > 0)
+			command += " --K_junk " + joboptions["nr_junk"].getString();
+		if (joboptions["junk_classes"].getString() != "")
+			command += " --junk_classes " + joboptions["junk_classes"].getString();
+		if (my_junk > 0 || joboptions["junk_classes"].getString() != "")
+		{
+			command += " --junk_lowpass " + joboptions["junk_lowpass"].getString();
+			if (joboptions["do_junk_fixed"].getBoolean())
+				command += " --junk_fixed";
+		}
 
 	}
 
